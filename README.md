@@ -70,8 +70,8 @@ Motorcycle Life Guard는 YOLO11n 기반 경량화 AI 모델을 활용하여 이�
 ### 1. 저장소 클론
 
 ```bash
-git clone [repository-url]
-cd motorcycle-life-guard
+git clone https://github.com/joyzh1029/ALG.git
+cd ALG
 ```
 
 ### 2. 프론트엔드 설치
@@ -196,6 +196,6 @@ pnpm build
 ## 연락처
 
 프로젝트 관리자: joyzh1029@gmail.com\
-프로젝트 링크: https://github.com/your_username/motorcycle-life-guard
+프로젝트 링크: https://github.com/joyzh1029/ALG.git
 
 ## 
