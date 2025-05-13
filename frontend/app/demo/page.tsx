@@ -191,10 +191,10 @@ export default function Demo() {
         // base64 이미지를 새로운 Image 객체로 변환
         const img = new Image();
         img.onload = () => {
-          if (videoRef.current) {
-            const context = videoRef.current.getContext('2d');
+          if (canvasRef.current) {
+            const context = canvasRef.current.getContext('2d');
             if (context) {
-              context.drawImage(img, 0, 0, videoRef.current.width, videoRef.current.height);
+              context.drawImage(img, 0, 0, canvasRef.current.width, canvasRef.current.height);
             }
           }
         };
@@ -370,12 +370,18 @@ export default function Demo() {
 
                   <div className="border border-gray-200 rounded-md bg-gray-50 h-[400px] flex items-center justify-center mb-6">
                     {isWebcamActive ? (
-                      <canvas
-                        ref={videoRef}
-                        width={640}
-                        height={480}
-                        className="max-h-full max-w-full object-contain"
-                      />
+                      <>
+                        <video 
+                          ref={videoRef} 
+                          className="hidden"
+                        />
+                        <canvas
+                          ref={canvasRef}
+                          width={640}
+                          height={480}
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      </>
                     ) : (
                       <p className="text-gray-400">웹캠이 시작되면 여기에 영상이 표시됩니다</p>
                     )}

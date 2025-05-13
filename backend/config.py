@@ -5,7 +5,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 # 모델 설정
 YOLO_WORLD_MODEL_PATH = str(BASE_DIR / "models" / "yolov8s-world.pt")  # YOLO-World 모델 경로
-YOLOV1N_MODEL_PATH = str(BASE_DIR / "models" / "yolo11n.pt")  # YOLOv1n-640 모델 경로
+YOLOV11N_MODEL_PATH = str(BASE_DIR / "models" / "yolo11n.pt")  # YOLO11n 모델 경로
 HELMET_MODEL_PATH = str(BASE_DIR / "models" / "helmet_model.pt")  # 헬멧 감지 모델 경로
 CONFIDENCE_THRESHOLD = 0.5  # 감지 신뢰도 임계값
 
