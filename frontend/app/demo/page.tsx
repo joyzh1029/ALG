@@ -1,8 +1,12 @@
 "use client"
 
+import { useState, useRef, useEffect } from "react"
 import type React from "react"
 
+<<<<<<< HEAD
 import { useState, useRef, useEffect } from "react"
+=======
+>>>>>>> origin/streaming
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -13,6 +17,9 @@ import { useMobile } from "@/hooks/use-mobile"
 
 export default function Demo() {
   const [activeTab, setActiveTab] = useState("image")
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [streamImage, setStreamImage] = useState<string | null>(null)
+  const ws = useRef<WebSocket | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -34,8 +41,10 @@ export default function Demo() {
     warning: string;
     image: string;
   } | null>(null)
-  const [websocket, setWebsocket] = useState<WebSocket | null>(null)
-  const [streamActive, setStreamActive] = useState(false)
+  const [isWebcamActive, setIsWebcamActive] = useState(false)
+  const [webcamWs, setWebcamWs] = useState<WebSocket | null>(null)
+  const videoRef = useRef<HTMLCanvasElement>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -131,130 +140,116 @@ export default function Demo() {
     }
   }
 
-  // Start/stop webcam stream
-  const toggleWebcamStream = async () => {
-    if (streamActive) {
-      // Stop the stream
-      if (websocket && websocket.readyState === WebSocket.OPEN) {
-        websocket.close()
-      }
-      
-      if (videoRef.current && videoRef.current.srcObject) {
-        const tracks = (videoRef.current.srcObject as MediaStream).getTracks()
-        tracks.forEach(track => track.stop())
-        videoRef.current.srcObject = null
-      }
-      
-      setStreamActive(false)
-      setWebsocket(null)
-    } else {
-      try {
-        // Start the webcam
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: isMobile ? "environment" : "user" } 
-        })
-        
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-        }
-        
-        // Connect to WebSocket
-        const ws = new WebSocket(BACKEND_WS_URL)
-        
-        ws.onopen = () => {
-          console.log("WebSocket connection established")
-          setStreamActive(true)
-        }
-        
-        ws.onmessage = (event) => {
-          const data = JSON.parse(event.data)
-          
-          if (data.alert) {
-            // Handle alert messages
-            console.log("Alert:", data.message)
-            // You could show a notification here
-          } else if (data.error) {
-            console.error("WebSocket error:", data.error)
-          } else {
-            // Handle detection results
-            setResults(data)
-            
-            // Update canvas with the received image
-            if (data.image) {
-              const img = new Image()
-              img.src = `data:image/jpeg;base64,${data.image}`
-              img.onload = () => {
-                if (!canvasRef.current) return
-                const canvas = canvasRef.current
-                const ctx = canvas.getContext("2d")
-                if (!ctx) return
-
-                canvas.width = img.width
-                canvas.height = img.height
-                ctx.drawImage(img, 0, 0)
-              }
-            }
-          }
-        }
-        
-        ws.onerror = (error) => {
-          console.error("WebSocket error:", error)
-          alert("WebSocket 연결 중 오류가 발생했습니다.")
-          setStreamActive(false)
-        }
-        
-        ws.onclose = () => {
-          console.log("WebSocket connection closed")
-          setStreamActive(false)
-        }
-        
-        setWebsocket(ws)
-        
-        // Start sending frames
-        const sendFrame = () => {
-          if (ws.readyState === WebSocket.OPEN && videoRef.current && streamActive) {
-            const canvas = document.createElement("canvas")
-            canvas.width = videoRef.current.videoWidth
-            canvas.height = videoRef.current.videoHeight
-            const ctx = canvas.getContext("2d")
-            
-            if (ctx) {
-              ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height)
-              const dataUrl = canvas.toDataURL("image/jpeg", 0.8)
-              ws.send(dataUrl)
-            }
-            
-            if (streamActive) {
-              requestAnimationFrame(sendFrame)
-            }
-          }
-        }
-        
-        // Wait for video to be ready
-        videoRef.current!.onloadedmetadata = () => {
-          videoRef.current!.play()
-          sendFrame()
-        }
-      } catch (error) {
-        console.error("Error accessing webcam:", error)
-        alert("웹캠에 접근할 수 없습니다.")
-      }
+  const startStream = () => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      console.log("WebSocket is already open");
+      return;
     }
-  }
 
-  // Clean up on component unmount
+    try {
+      ws.current = new WebSocket('ws://localhost:8000/ws/stream');
+      
+      ws.current.onopen = () => {
+        console.log('WebSocket Connected');
+        setIsStreaming(true);
+      };
+
+      ws.current.onmessage = (event) => {
+        setStreamImage(`data:image/jpeg;base64,${event.data}`);
+      };
+
+      ws.current.onerror = (error) => {
+        console.error('WebSocket Error:', error);
+        setIsStreaming(false);
+      };
+
+      ws.current.onclose = () => {
+        console.log('WebSocket Disconnected');
+        setIsStreaming(false);
+      };
+    } catch (error) {
+      console.error('WebSocket Connection Error:', error);
+    }
+  };
+
+  const stopStream = () => {
+    if (ws.current) {
+      ws.current.close();
+      ws.current = null;
+      setIsStreaming(false);
+      setStreamImage(null);
+    }
+  };
+
+  const startWebcam = async () => {
+    try {
+      // WebSocket 연결 시작
+      const ws = new WebSocket('ws://localhost:8000/ws/webcam');
+      
+      ws.onopen = () => {
+        console.log('WebSocket Connected for webcam');
+        setIsWebcamActive(true);
+        setWebcamWs(ws);
+      };
+
+      ws.onmessage = (event) => {
+        // base64 이미지를 새로운 Image 객체로 변환
+        const img = new Image();
+        img.onload = () => {
+          if (videoRef.current) {
+            const context = videoRef.current.getContext('2d');
+            if (context) {
+              context.drawImage(img, 0, 0, videoRef.current.width, videoRef.current.height);
+            }
+          }
+        };
+        img.src = `data:image/jpeg;base64,${event.data}`;
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket Disconnected');
+        setIsWebcamActive(false);
+        setWebcamWs(null);
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket Error:', error);
+        setIsWebcamActive(false);
+      };
+      
+    } catch (error) {
+      console.error('웹캠 연결 실패:', error);
+    }
+  };
+
+  const stopWebcam = () => {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+      setIsWebcamActive(false);
+    }
+    
+    if (webcamWs) {
+      webcamWs.close();
+      setWebcamWs(null);
+    }
+  };
+
+  // 컴포넌트 언마운트 시 웹캠 정리
   useEffect(() => {
     return () => {
-      if (websocket) {
-        websocket.close()
+      stopWebcam();
+    };
+  }, []);
+
+  // 컴포넌트 언마운트 시 WebSocket 연결 정리
+  useEffect(() => {
+    return () => {
+      if (ws.current) {
+        ws.current.close();
       }
-      
-      if (videoRef.current && videoRef.current.srcObject) {
-        const tracks = (videoRef.current.srcObject as MediaStream).getTracks()
-        tracks.forEach(track => track.stop())
-      }
-    }
-  }, [websocket])
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -373,45 +368,85 @@ export default function Demo() {
                 </TabsContent>
 
                 <TabsContent value="webcam" className="mt-6">
-                  <div className="text-center py-12">
-                    <Camera className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-                    <h3 className="text-lg font-medium mb-2">웹캠 업로드</h3>
-                    <p className="text-gray-500 mb-4">이 기능은 곧 제공될 예정입니다!</p>
+                  <h3 className="text-lg font-medium mb-2">웹캠</h3>
+                  <p className="text-sm text-gray-500 mb-4">
+                    웹캠을 통해 실시간으로 헬멧 착용 여부를 감지합니다
+                  </p>
+
+                  <div className="border border-gray-200 rounded-md bg-gray-50 h-[400px] flex items-center justify-center mb-6">
+                    {isWebcamActive ? (
+                      <canvas
+                        ref={videoRef}
+                        width={640}
+                        height={480}
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    ) : (
+                      <p className="text-gray-400">웹캠이 시작되면 여기에 영상이 표시됩니다</p>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button
+                      onClick={isWebcamActive ? stopWebcam : startWebcam}
+                      className={cn(
+                        "min-w-[100px]",
+                        isWebcamActive ? "bg-red-600 hover:bg-red-700" : "bg-gray-700 hover:bg-gray-800"
+                      )}
+                    >
+                      {isWebcamActive ? (
+                        <>
+                          <Camera className="mr-2 h-4 w-4" />
+                          중지
+                        </>
+                      ) : (
+                        <>
+                          <Camera className="mr-2 h-4 w-4" />
+                          시작
+                        </>
+                      )}
+                    </Button>
                   </div>
                 </TabsContent>
 
-                <TabsContent value="stream" className="mt-0">
-                  <div className="p-4">
-                    <h3 className="text-lg font-medium mb-2">실시간 스트림</h3>
-                    <div className="mb-4">
-                      <Button 
-                        onClick={toggleWebcamStream}
-                        className={streamActive ? "bg-red-500 hover:bg-red-600" : ""}
-                      >
-                        {streamActive ? (
-                          <>
-                            <Tv className="mr-2 h-4 w-4" /> 스트림 중지
-                          </>
-                        ) : (
-                          <>
-                            <Video className="mr-2 h-4 w-4" /> 스트림 시작
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                    
-                    <div className="relative aspect-video bg-black rounded-md overflow-hidden">
-                      <video
-                        ref={videoRef}
-                        className="absolute inset-0 w-full h-full object-contain"
-                        muted
-                        playsInline
+                <TabsContent value="stream" className="mt-6">
+                  <h3 className="text-lg font-medium mb-2">실시간 스트림</h3>
+                  <p className="text-sm text-gray-500 mb-4">
+                    실시간 CCTV 영상에서 헬멧 착용 여부를 감지합니다
+                  </p>
+
+                  <div className="border border-gray-200 rounded-md bg-gray-50 h-[400px] flex items-center justify-center mb-6">
+                    {streamImage ? (
+                      <img 
+                        src={streamImage} 
+                        alt="CCTV Stream" 
+                        className="max-h-full max-w-full object-contain"
                       />
-                      <canvas
-                        ref={canvasRef}
-                        className="absolute inset-0 w-full h-full object-contain z-10"
-                      />
-                    </div>
+                    ) : (
+                      <p className="text-gray-400">스트리밍이 시작되면 여기에 영상이 표시됩니다</p>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button
+                      onClick={isStreaming ? stopStream : startStream}
+                      className={cn(
+                        "min-w-[100px]",
+                        isStreaming ? "bg-red-600 hover:bg-red-700" : "bg-gray-700 hover:bg-gray-800"
+                      )}
+                    >
+                      {isStreaming ? (
+                        <>
+                          <Tv className="mr-2 h-4 w-4" />
+                          중지
+                        </>
+                      ) : (
+                        <>
+                          <Tv className="mr-2 h-4 w-4" />
+                          시작
+                        </>
+                      )}
+                    </Button>
                   </div>
                 </TabsContent>
               </Tabs>
