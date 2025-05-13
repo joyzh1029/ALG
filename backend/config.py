@@ -3,8 +3,10 @@ from pathlib import Path
 # 기본 설정
 BASE_DIR = Path(__file__).resolve().parent
 
-# YOLO 모델 설정
-MODEL_PATH = str(BASE_DIR / "models" / "helmet_detection.pt")  # 다운로드 또는 학습이 필요한 헬멧 감지 모델
+# 모델 설정
+YOLO_WORLD_MODEL_PATH = str(BASE_DIR / "models" / "yolov8s-world.pt")  # YOLO-World 모델 경로
+YOLOV1N_MODEL_PATH = str(BASE_DIR / "models" / "yolo11n.pt")  # YOLOv1n-640 모델 경로
+HELMET_MODEL_PATH = str(BASE_DIR / "models" / "helmet_model.pt")  # 헬멧 감지 모델 경로
 CONFIDENCE_THRESHOLD = 0.5  # 감지 신뢰도 임계값
 
 # 클래스 설정
@@ -14,6 +16,23 @@ CLASSES = {
     2: "helmet",      # 헬멧
     3: "no_helmet"    # 헬멧 미착용
 }
+
+# 표현식 설정
+RIDER_MOTORCYCLE_PAIRING_THRESHOLD = 0.6  # 라이더와 오토바이 페어링 임계값
+HELMET_RESULT_AGGREGATION_THRESHOLD = 0.5  # 헬멧 결과 집계 임계값
+
+# 동적 크롭 설정
+RIDER_CROP_PADDING = 0.2  # 라이더 크롭 시 추가 여백 비율
+
+# 라벨 시각화 설정
+LABEL_COLORS = {
+    "motorcycle": (0, 0, 255),    # 빨간색
+    "person": (0, 255, 0),        # 녹색
+    "helmet": (255, 0, 0),        # 파란색
+    "no_helmet": (255, 0, 255)    # 보라색
+}
+LABEL_THICKNESS = 2
+LABEL_FONT_SCALE = 0.6
 
 # API 설정
 API_DESCRIPTION = """

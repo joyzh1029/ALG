@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -17,18 +17,34 @@ export default function Demo() {
   const [preview, setPreview] = useState<string | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [results, setResults] = useState<{
-    withHelmet: number
-    withoutHelmet: number
-    detections: Array<{
-      box: [number, number, number, number]
-      class: "helmet" | "no-helmet"
-      confidence: number
-    }>
+    timestamp: string;
+    all_detections: Array<{
+      bbox: number[];
+      confidence: number;
+      class: string;
+      model: string;
+    }>;
+    rider_pairs: Array<any>;
+    helmet_results: Array<{
+      status: string;
+      message: string;
+      helmet_confidence: number;
+      no_helmet_confidence: number;
+    }>;
+    warning: string;
+    image: string;
   } | null>(null)
+  const [websocket, setWebsocket] = useState<WebSocket | null>(null)
+  const [streamActive, setStreamActive] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
   const isMobile = useMobile()
+
+  // Backend API URL - adjust this to match your backend configuration
+  const BACKEND_API_URL = "http://localhost:8000"
+  const BACKEND_WS_URL = "ws://localhost:8000/ws"
 
   // Handle file selection
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -55,94 +71,190 @@ export default function Demo() {
     fileInputRef.current?.click()
   }
 
-  // Process the image with mock YOLO detection
+  // Process the image with backend API
   const processImage = async () => {
-    if (!preview) return
+    if (!preview || !selectedFile) return
 
     setIsProcessing(true)
 
-    // Simulate processing time
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+    try {
+      // Create form data for file upload
+      const formData = new FormData()
+      formData.append("file", selectedFile)
 
-    // Mock detection results
-    const mockResults = {
-      withHelmet: Math.floor(Math.random() * 3),
-      withoutHelmet: Math.floor(Math.random() * 3) + 1,
-      detections: [
-        {
-          box: [50, 50, 150, 150],
-          class: "no-helmet" as const,
-          confidence: 0.92,
-        },
-        {
-          box: [250, 100, 350, 200],
-          class: "helmet" as const,
-          confidence: 0.88,
-        },
-      ],
-    }
-
-    setResults(mockResults)
-    setIsProcessing(false)
-
-    // Draw bounding boxes on canvas
-    drawDetections(mockResults.detections)
-  }
-
-  // Draw detection boxes on canvas
-  const drawDetections = (
-    detections:
-      | Array<{
-          box: [number, number, number, number]
-          class: "helmet" | "no-helmet"
-          confidence: number
-        }>
-      | undefined,
-  ) => {
-    if (!canvasRef.current || !preview || !detections) return
-
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-
-    // Load the image to get dimensions
-    const img = new Image()
-    img.crossOrigin = "anonymous"
-    img.onload = () => {
-      // Set canvas dimensions to match image
-      canvas.width = img.width
-      canvas.height = img.height
-
-      // Draw the image
-      ctx.drawImage(img, 0, 0)
-
-      // Draw detection boxes
-      detections.forEach((detection) => {
-        const [x, y, width, height] = detection.box
-
-        // Set styles based on class
-        if (detection.class === "helmet") {
-          ctx.strokeStyle = "#10b981" // Green
-        } else {
-          ctx.strokeStyle = "#ef4444" // Red
-        }
-
-        ctx.lineWidth = 3
-        ctx.strokeRect(x, y, width, height)
-
-        // Add label
-        ctx.fillStyle = detection.class === "helmet" ? "#10b981" : "#ef4444"
-        ctx.font = "16px Arial"
-        const label = `${detection.class === "helmet" ? "헬멧 착용" : "헬멧 미착용"} ${Math.round(detection.confidence * 100)}%`
-        const textWidth = ctx.measureText(label).width
-
-        ctx.fillRect(x, y - 25, textWidth + 10, 25)
-        ctx.fillStyle = "#ffffff"
-        ctx.fillText(label, x + 5, y - 7)
+      console.log("이미지 시작 업로드")
+      
+      // Call backend API
+      const response = await fetch(`${BACKEND_API_URL}/detect`, {
+        method: "POST",
+        body: formData,
       })
+
+      console.log("API 응답 상태:", response.status)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error("API 오류:", errorText)
+        throw new Error(`API error: ${response.status} - ${errorText}`)
+      }
+
+      console.log("API 응답 데이터 파싱")
+      const data = await response.json()
+      console.log("API 응답 데이터:", data)
+      
+      setResults(data)
+
+      // Draw bounding boxes on canvas using the received image
+      if (data.image) {
+        console.log("결과 이미지 렌더링")
+        const img = new Image()
+        img.src = `data:image/jpeg;base64,${data.image}`
+        img.onload = () => {
+          if (!canvasRef.current) return
+          const canvas = canvasRef.current
+          const ctx = canvas.getContext("2d")
+          if (!ctx) return
+
+          canvas.width = img.width
+          canvas.height = img.height
+          ctx.drawImage(img, 0, 0)
+          console.log("결과 이미지 렌더링 완료")
+        }
+      } else {
+        console.warn("API 응답 데이터에 이미지 데이터가 없습니다")
+      }
+    } catch (error) {
+      console.error("이미지 처리 중 오류:", error)
+      alert(`이미지 처리 중 오류: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setIsProcessing(false)
     }
-    img.src = preview
   }
+
+  // Start/stop webcam stream
+  const toggleWebcamStream = async () => {
+    if (streamActive) {
+      // Stop the stream
+      if (websocket && websocket.readyState === WebSocket.OPEN) {
+        websocket.close()
+      }
+      
+      if (videoRef.current && videoRef.current.srcObject) {
+        const tracks = (videoRef.current.srcObject as MediaStream).getTracks()
+        tracks.forEach(track => track.stop())
+        videoRef.current.srcObject = null
+      }
+      
+      setStreamActive(false)
+      setWebsocket(null)
+    } else {
+      try {
+        // Start the webcam
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: isMobile ? "environment" : "user" } 
+        })
+        
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+        }
+        
+        // Connect to WebSocket
+        const ws = new WebSocket(BACKEND_WS_URL)
+        
+        ws.onopen = () => {
+          console.log("WebSocket connection established")
+          setStreamActive(true)
+        }
+        
+        ws.onmessage = (event) => {
+          const data = JSON.parse(event.data)
+          
+          if (data.alert) {
+            // Handle alert messages
+            console.log("Alert:", data.message)
+            // You could show a notification here
+          } else if (data.error) {
+            console.error("WebSocket error:", data.error)
+          } else {
+            // Handle detection results
+            setResults(data)
+            
+            // Update canvas with the received image
+            if (data.image) {
+              const img = new Image()
+              img.src = `data:image/jpeg;base64,${data.image}`
+              img.onload = () => {
+                if (!canvasRef.current) return
+                const canvas = canvasRef.current
+                const ctx = canvas.getContext("2d")
+                if (!ctx) return
+
+                canvas.width = img.width
+                canvas.height = img.height
+                ctx.drawImage(img, 0, 0)
+              }
+            }
+          }
+        }
+        
+        ws.onerror = (error) => {
+          console.error("WebSocket error:", error)
+          alert("WebSocket 연결 중 오류가 발생했습니다.")
+          setStreamActive(false)
+        }
+        
+        ws.onclose = () => {
+          console.log("WebSocket connection closed")
+          setStreamActive(false)
+        }
+        
+        setWebsocket(ws)
+        
+        // Start sending frames
+        const sendFrame = () => {
+          if (ws.readyState === WebSocket.OPEN && videoRef.current && streamActive) {
+            const canvas = document.createElement("canvas")
+            canvas.width = videoRef.current.videoWidth
+            canvas.height = videoRef.current.videoHeight
+            const ctx = canvas.getContext("2d")
+            
+            if (ctx) {
+              ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height)
+              const dataUrl = canvas.toDataURL("image/jpeg", 0.8)
+              ws.send(dataUrl)
+            }
+            
+            if (streamActive) {
+              requestAnimationFrame(sendFrame)
+            }
+          }
+        }
+        
+        // Wait for video to be ready
+        videoRef.current!.onloadedmetadata = () => {
+          videoRef.current!.play()
+          sendFrame()
+        }
+      } catch (error) {
+        console.error("Error accessing webcam:", error)
+        alert("웹캠에 접근할 수 없습니다.")
+      }
+    }
+  }
+
+  // Clean up on component unmount
+  useEffect(() => {
+    return () => {
+      if (websocket) {
+        websocket.close()
+      }
+      
+      if (videoRef.current && videoRef.current.srcObject) {
+        const tracks = (videoRef.current.srcObject as MediaStream).getTracks()
+        tracks.forEach(track => track.stop())
+      }
+    }
+  }, [websocket])
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -268,11 +380,38 @@ export default function Demo() {
                   </div>
                 </TabsContent>
 
-                <TabsContent value="stream" className="mt-6">
-                  <div className="text-center py-12">
-                    <Tv className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+                <TabsContent value="stream" className="mt-0">
+                  <div className="p-4">
                     <h3 className="text-lg font-medium mb-2">실시간 스트림</h3>
-                    <p className="text-gray-500 mb-4">이 기능은 곧 제공될 예정입니다!</p>
+                    <div className="mb-4">
+                      <Button 
+                        onClick={toggleWebcamStream}
+                        className={streamActive ? "bg-red-500 hover:bg-red-600" : ""}
+                      >
+                        {streamActive ? (
+                          <>
+                            <Tv className="mr-2 h-4 w-4" /> 스트림 중지
+                          </>
+                        ) : (
+                          <>
+                            <Video className="mr-2 h-4 w-4" /> 스트림 시작
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    
+                    <div className="relative aspect-video bg-black rounded-md overflow-hidden">
+                      <video
+                        ref={videoRef}
+                        className="absolute inset-0 w-full h-full object-contain"
+                        muted
+                        playsInline
+                      />
+                      <canvas
+                        ref={canvasRef}
+                        className="absolute inset-0 w-full h-full object-contain z-10"
+                      />
+                    </div>
                   </div>
                 </TabsContent>
               </Tabs>
@@ -294,64 +433,55 @@ export default function Demo() {
                     <div
                       className={cn(
                         "p-4 rounded-lg flex items-center",
-                        results.withHelmet > 0 ? "bg-green-100" : "bg-gray-100",
+                        results.helmet_results.some(r => r.status === "helmet") ? "bg-green-100" : "bg-gray-100",
                       )}
                     >
                       <CheckCircle
-                        className={cn("h-6 w-6 mr-2", results.withHelmet > 0 ? "text-green-600" : "text-gray-400")}
+                        className={cn(
+                          "h-6 w-6 mr-2", 
+                          results.helmet_results.some(r => r.status === "helmet") ? "text-green-600" : "text-gray-400"
+                        )}
                       />
                       <div>
                         <p className="font-medium">헬멧 착용</p>
-                        <p className="text-2xl font-bold">{results.withHelmet}</p>
+                        <p className="text-2xl font-bold">
+                          {results.helmet_results.filter(r => r.status === "helmet").length}
+                        </p>
                       </div>
                     </div>
 
                     <div
                       className={cn(
                         "p-4 rounded-lg flex items-center",
-                        results.withoutHelmet > 0 ? "bg-red-100" : "bg-gray-100",
+                        results.helmet_results.some(r => r.status === "no_helmet") ? "bg-red-100" : "bg-gray-100",
                       )}
                     >
                       <AlertTriangle
-                        className={cn("h-6 w-6 mr-2", results.withoutHelmet > 0 ? "text-red-600" : "text-gray-400")}
+                        className={cn(
+                          "h-6 w-6 mr-2", 
+                          results.helmet_results.some(r => r.status === "no_helmet") ? "text-red-600" : "text-gray-400"
+                        )}
                       />
                       <div>
                         <p className="font-medium">헬멧 미착용</p>
-                        <p className="text-2xl font-bold">{results.withoutHelmet}</p>
+                        <p className="text-2xl font-bold">
+                          {results.helmet_results.filter(r => r.status === "no_helmet").length}
+                        </p>
                       </div>
                     </div>
                   </div>
 
-                  {results.withoutHelmet > 0 && (
+                  {results.warning && results.warning.startsWith("경고") && (
                     <div className="bg-red-50 border-l-4 border-red-500 p-4 text-red-700 mb-6">
                       <div className="flex">
                         <AlertTriangle className="h-6 w-6 mr-2 flex-shrink-0" />
                         <div>
                           <p className="font-bold">경고</p>
-                          <p>
-                            헬멧을 착용하지 않은 운전자 {results.withoutHelmet}명이 감지되었습니다. 이는 심각한 안전
-                            위험을 초래합니다.
-                          </p>
+                          <p>{results.warning}</p>
                         </div>
                       </div>
                     </div>
                   )}
-
-                  <div className="flex justify-between">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setPreview(null)
-                        setSelectedFile(null)
-                        setResults(null)
-                      }}
-                    >
-                      다시 시작
-                    </Button>
-                    <Button asChild>
-                      <Link href="/statistics">통계 보기</Link>
-                    </Button>
-                  </div>
                 </div>
               )}
             </CardContent>
@@ -361,7 +491,7 @@ export default function Demo() {
 
       <footer className="bg-gray-900 text-white py-6 mt-12">
         <div className="container mx-auto px-4 text-center">
-          <p>© {new Date().getFullYear()} 오토바이 라이프 가드. 모든 권리 보유.</p>
+          <p> 2024 오토바이 라이프 가드. 모든 권리 보유.</p>
         </div>
       </footer>
     </div>

@@ -59,6 +59,10 @@ Motorcycle Life Guard는 YOLO11n 기반 경량화 AI 모델을 활용하여 이�
 - **프론트엔드**
   - Node.js 18.0.0 이상
   - pnpm 패키지 매니저
+  ```bash
+    npm install -g pnpm
+  ```
+
 - **백엔드**
   - Python 3.10
   - NVIDIA GPU (권장, CUDA 11.8/12.1 지원)
