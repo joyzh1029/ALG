@@ -1,8 +1,8 @@
 "use client"
 
+import { useState, useRef, useEffect } from "react"
 import type React from "react"
 
-import { useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -13,6 +13,9 @@ import { useMobile } from "@/hooks/use-mobile"
 
 export default function Demo() {
   const [activeTab, setActiveTab] = useState("image")
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [streamImage, setStreamImage] = useState<string | null>(null)
+  const ws = useRef<WebSocket | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -25,6 +28,10 @@ export default function Demo() {
       confidence: number
     }>
   } | null>(null)
+  const [isWebcamActive, setIsWebcamActive] = useState(false)
+  const [webcamWs, setWebcamWs] = useState<WebSocket | null>(null)
+  const videoRef = useRef<HTMLCanvasElement>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -144,6 +151,117 @@ export default function Demo() {
     img.src = preview
   }
 
+  const startStream = () => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      console.log("WebSocket is already open");
+      return;
+    }
+
+    try {
+      ws.current = new WebSocket('ws://localhost:8000/ws/stream');
+      
+      ws.current.onopen = () => {
+        console.log('WebSocket Connected');
+        setIsStreaming(true);
+      };
+
+      ws.current.onmessage = (event) => {
+        setStreamImage(`data:image/jpeg;base64,${event.data}`);
+      };
+
+      ws.current.onerror = (error) => {
+        console.error('WebSocket Error:', error);
+        setIsStreaming(false);
+      };
+
+      ws.current.onclose = () => {
+        console.log('WebSocket Disconnected');
+        setIsStreaming(false);
+      };
+    } catch (error) {
+      console.error('WebSocket Connection Error:', error);
+    }
+  };
+
+  const stopStream = () => {
+    if (ws.current) {
+      ws.current.close();
+      ws.current = null;
+      setIsStreaming(false);
+      setStreamImage(null);
+    }
+  };
+
+  const startWebcam = async () => {
+    try {
+      // WebSocket 연결 시작
+      const ws = new WebSocket('ws://localhost:8000/ws/webcam');
+      
+      ws.onopen = () => {
+        console.log('WebSocket Connected for webcam');
+        setIsWebcamActive(true);
+        setWebcamWs(ws);
+      };
+
+      ws.onmessage = (event) => {
+        // base64 이미지를 새로운 Image 객체로 변환
+        const img = new Image();
+        img.onload = () => {
+          if (videoRef.current) {
+            const context = videoRef.current.getContext('2d');
+            if (context) {
+              context.drawImage(img, 0, 0, videoRef.current.width, videoRef.current.height);
+            }
+          }
+        };
+        img.src = `data:image/jpeg;base64,${event.data}`;
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket Disconnected');
+        setIsWebcamActive(false);
+        setWebcamWs(null);
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket Error:', error);
+        setIsWebcamActive(false);
+      };
+      
+    } catch (error) {
+      console.error('웹캠 연결 실패:', error);
+    }
+  };
+
+  const stopWebcam = () => {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+      setIsWebcamActive(false);
+    }
+    
+    if (webcamWs) {
+      webcamWs.close();
+      setWebcamWs(null);
+    }
+  };
+
+  // 컴포넌트 언마운트 시 웹캠 정리
+  useEffect(() => {
+    return () => {
+      stopWebcam();
+    };
+  }, []);
+
+  // 컴포넌트 언마운트 시 WebSocket 연결 정리
+  useEffect(() => {
+    return () => {
+      if (ws.current) {
+        ws.current.close();
+      }
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-red-600 text-white py-4">
@@ -261,18 +379,85 @@ export default function Demo() {
                 </TabsContent>
 
                 <TabsContent value="webcam" className="mt-6">
-                  <div className="text-center py-12">
-                    <Camera className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-                    <h3 className="text-lg font-medium mb-2">웹캠 업로드</h3>
-                    <p className="text-gray-500 mb-4">이 기능은 곧 제공될 예정입니다!</p>
+                  <h3 className="text-lg font-medium mb-2">웹캠</h3>
+                  <p className="text-sm text-gray-500 mb-4">
+                    웹캠을 통해 실시간으로 헬멧 착용 여부를 감지합니다
+                  </p>
+
+                  <div className="border border-gray-200 rounded-md bg-gray-50 h-[400px] flex items-center justify-center mb-6">
+                    {isWebcamActive ? (
+                      <canvas
+                        ref={videoRef}
+                        width={640}
+                        height={480}
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    ) : (
+                      <p className="text-gray-400">웹캠이 시작되면 여기에 영상이 표시됩니다</p>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button
+                      onClick={isWebcamActive ? stopWebcam : startWebcam}
+                      className={cn(
+                        "min-w-[100px]",
+                        isWebcamActive ? "bg-red-600 hover:bg-red-700" : "bg-gray-700 hover:bg-gray-800"
+                      )}
+                    >
+                      {isWebcamActive ? (
+                        <>
+                          <Camera className="mr-2 h-4 w-4" />
+                          중지
+                        </>
+                      ) : (
+                        <>
+                          <Camera className="mr-2 h-4 w-4" />
+                          시작
+                        </>
+                      )}
+                    </Button>
                   </div>
                 </TabsContent>
 
                 <TabsContent value="stream" className="mt-6">
-                  <div className="text-center py-12">
-                    <Tv className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-                    <h3 className="text-lg font-medium mb-2">실시간 스트림</h3>
-                    <p className="text-gray-500 mb-4">이 기능은 곧 제공될 예정입니다!</p>
+                  <h3 className="text-lg font-medium mb-2">실시간 스트림</h3>
+                  <p className="text-sm text-gray-500 mb-4">
+                    실시간 CCTV 영상에서 헬멧 착용 여부를 감지합니다
+                  </p>
+
+                  <div className="border border-gray-200 rounded-md bg-gray-50 h-[400px] flex items-center justify-center mb-6">
+                    {streamImage ? (
+                      <img 
+                        src={streamImage} 
+                        alt="CCTV Stream" 
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    ) : (
+                      <p className="text-gray-400">스트리밍이 시작되면 여기에 영상이 표시됩니다</p>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button
+                      onClick={isStreaming ? stopStream : startStream}
+                      className={cn(
+                        "min-w-[100px]",
+                        isStreaming ? "bg-red-600 hover:bg-red-700" : "bg-gray-700 hover:bg-gray-800"
+                      )}
+                    >
+                      {isStreaming ? (
+                        <>
+                          <Tv className="mr-2 h-4 w-4" />
+                          중지
+                        </>
+                      ) : (
+                        <>
+                          <Tv className="mr-2 h-4 w-4" />
+                          시작
+                        </>
+                      )}
+                    </Button>
                   </div>
                 </TabsContent>
               </Tabs>
