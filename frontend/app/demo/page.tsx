@@ -3,10 +3,6 @@
 import { useState, useRef, useEffect } from "react"
 import type React from "react"
 
-<<<<<<< HEAD
-import { useState, useRef, useEffect } from "react"
-=======
->>>>>>> origin/streaming
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -43,12 +39,11 @@ export default function Demo() {
   } | null>(null)
   const [isWebcamActive, setIsWebcamActive] = useState(false)
   const [webcamWs, setWebcamWs] = useState<WebSocket | null>(null)
-  const videoRef = useRef<HTMLCanvasElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const videoRef = useRef<HTMLVideoElement>(null)
   const isMobile = useMobile()
 
   // Backend API URL - adjust this to match your backend configuration
