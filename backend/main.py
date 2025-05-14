@@ -9,6 +9,11 @@ import base64
 from datetime import datetime
 import asyncio
 from config import *
+from gpt_video import process_video
+from gpt_streaming import start_streaming_server
+import os
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(
     title=API_TITLE,
@@ -78,7 +83,7 @@ def rider_motorcycle_pairing(detections: List[Dict]) -> List[Dict]:
         size_factor = 1.0
         if max(moto_width, moto_height) < 100:  # 100픽셀 미만은 멀리있는 작은 오토바이로 판단
             size_factor = 1.5  # 멀리있는 작은 오토바이를 위한 임계값 조정
-            print(f"   멀리있는 작은 오토바이 임계값 조정: 尺寸={moto_width:.1f}x{moto_height:.1f}, 계수={size_factor}")
+            print(f"   멀리있는 작은 오토바이 임계값 조정: 사이즈={moto_width:.1f}x{moto_height:.1f}, 계수={size_factor}")
         
         moto_threshold = RIDER_MOTORCYCLE_PAIRING_THRESHOLD * max(moto_width, moto_height) * size_factor
     
@@ -521,6 +526,25 @@ async def detect_helmet(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/process-video")
+async def process_video_endpoint(file: UploadFile = File(...)):
+    """비디오 파일을 처리하고 결과를 반환하는 엔드포인트"""
+    if not file.filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+        raise HTTPException(status_code=400, detail="지원되지 않는 비디오 형식입니다. MP4, AVI, MOV 또는 MKV 파일만 허용됩니다.")
+    
+    # gpt_video.py의 process_video 함수 호출
+    result = await process_video(file)
+    return result
+
+@app.get("/video/{filename}")
+async def get_video(filename: str):
+    """처리된 비디오 파일을 제공하는 엔드포인트"""
+    video_path = os.path.join("result", filename)
+    if not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="비디오 파일을 찾을 수 없습니다.")
+    
+    return FileResponse(video_path)
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -570,3 +594,21 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"WebSocket Error: {e}")
     finally:
         await websocket.close()
+
+@app.websocket("/ws/cctv")
+async def cctv_stream_endpoint(websocket: WebSocket):
+    """CCTV 스트리밍을 위한 WebSocket 엔드포인트"""
+    await websocket.accept()
+    try:
+        # gpt_streaming.py의 start_streaming_server 함수 호출
+        await start_streaming_server(websocket)
+    except Exception as e:
+        print(f"CCTV 스트리밍 오류: {e}")
+    finally:
+        await websocket.close()
+
+# 결과 디렉토리가 없으면 생성
+os.makedirs("result", exist_ok=True)
+
+# 정적 파일 제공 설정
+app.mount("/result", StaticFiles(directory="result"), name="result")
