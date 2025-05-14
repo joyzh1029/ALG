@@ -40,7 +40,7 @@ except Exception as e:
 def rider_motorcycle_pairing(detections: List[Dict]) -> List[Dict]:
     """라이더와 오토바이 페어링 처리"""
     print(f"라이더-오토바이 페어링， {len(detections)} ")
-    
+
     # 모델이 인식한 모든 클래스를 출력
     classes = [d["class"] for d in detections]
     unique_classes = set(classes)
@@ -69,44 +69,80 @@ def rider_motorcycle_pairing(detections: List[Dict]) -> List[Dict]:
                 print(f"오토바이 클래스 '{cls}'로 찾은 {len(motorcycles)}")
                 break
     
-    pairs = []
+    # 멀리있는 오토바이를 위한 임계값 조정
+    for moto_idx, motorcycle in enumerate(motorcycles):
+        moto_width = motorcycle["bbox"][2] - motorcycle["bbox"][0]
+        moto_height = motorcycle["bbox"][3] - motorcycle["bbox"][1]
+        
+        #  멀리있는 작은 오토바이를 위한 임계값 조정
+        size_factor = 1.0
+        if max(moto_width, moto_height) < 100:  # 100픽셀 미만은 멀리있는 작은 오토바이로 판단
+            size_factor = 1.5  # 멀리있는 작은 오토바이를 위한 임계값 조정
+            print(f"   멀리있는 작은 오토바이 임계값 조정: 尺寸={moto_width:.1f}x{moto_height:.1f}, 계수={size_factor}")
+        
+        moto_threshold = RIDER_MOTORCYCLE_PAIRING_THRESHOLD * max(moto_width, moto_height) * size_factor
     
-    for rider_idx, rider in enumerate(riders):
-        rider_center_x = (rider["bbox"][0] + rider["bbox"][2]) / 2
-        rider_center_y = (rider["bbox"][1] + rider["bbox"][3]) / 2
+    pairs = []
+    paired_rider_indices = set()  # 이미 페어링된 라이더 인덱스 추적
+    
+    # 1단계: 각 오토바이에 대해 근처의 모든 라이더를 찾되, 각 라이더는 한 대의 오토바이에만 할당
+    for moto_idx, motorcycle in enumerate(motorcycles):
+        moto_center_x = (motorcycle["bbox"][0] + motorcycle["bbox"][2]) / 2
+        moto_center_y = (motorcycle["bbox"][1] + motorcycle["bbox"][3]) / 2
         
-        best_match = None
-        best_distance = float('inf')
+        moto_width = motorcycle["bbox"][2] - motorcycle["bbox"][0]
+        moto_height = motorcycle["bbox"][3] - motorcycle["bbox"][1]
+        moto_threshold = RIDER_MOTORCYCLE_PAIRING_THRESHOLD * max(moto_width, moto_height)
         
-        for moto_idx, motorcycle in enumerate(motorcycles):
-            moto_center_x = (motorcycle["bbox"][0] + motorcycle["bbox"][2]) / 2
-            moto_center_y = (motorcycle["bbox"][1] + motorcycle["bbox"][3]) / 2
+        # 이 오토바이와 페어링 가능한 라이더들
+        potential_riders = []
+        
+        # 모든 라이더에 대해 거리 계산
+        for rider_idx, rider in enumerate(riders):
+            # 이미 페어링된 라이더는 건너뜀
+            if rider_idx in paired_rider_indices:
+                continue
+                
+            rider_center_x = (rider["bbox"][0] + rider["bbox"][2]) / 2
+            rider_center_y = (rider["bbox"][1] + rider["bbox"][3]) / 2
             
             # 유클리드 거리 계산
             distance = ((rider_center_x - moto_center_x) ** 2 + (rider_center_y - moto_center_y) ** 2) ** 0.5
             
-            # 거리가 임계값보다 작으면 페어링
-            if distance < best_distance:
-                best_distance = distance
-                best_match = motorcycle
+            # 거리가 임계값보다 작으면 잠재적 페어링 대상
+            if distance < moto_threshold:
+                confidence = 1.0 - (distance / moto_width) if moto_width > 0 else 0.5
+                potential_riders.append({
+                    "rider_idx": rider_idx,
+                    "rider": rider,
+                    "distance": distance,
+                    "confidence": confidence
+                })
         
-        # 페어링 임계값 계산
-        rider_width = rider["bbox"][2] - rider["bbox"][0]
-        rider_height = rider["bbox"][3] - rider["bbox"][1]
-        threshold = RIDER_MOTORCYCLE_PAIRING_THRESHOLD * max(rider_width, rider_height)
+        # 거리순으로 정렬 (가까운 순)
+        potential_riders.sort(key=lambda x: x["distance"])
         
-        if best_match and best_distance < threshold:
-            confidence = 1.0 - (best_distance / (best_match["bbox"][2] - best_match["bbox"][0]))
-            print(f"라이더 {rider_idx} 페어링 성공，오토바이: {best_match['class']}, 거리: {best_distance:.2f}，임계값: {threshold:.2f}，신뢰도: {confidence:.2f}")
-            pairs.append({
+        # 페어링 처리 (한 오토바이에 여러 라이더 가능)
+        for rider_data in potential_riders:
+            rider_idx = rider_data["rider_idx"]
+            rider = rider_data["rider"]
+            distance = rider_data["distance"]
+            confidence = rider_data["confidence"]
+            
+            # 페어 생성
+            pair = {
                 "rider": rider,
-                "motorcycle": best_match,
-                "confidence": confidence
-            })
-        else:
-            print(f"라이더 {rider_idx} 페어링 실패，오토바이: {best_match['class']}, 거리: {best_distance:.2f}，임계값: {threshold:.2f}")
+                "motorcycle": motorcycle,
+                "confidence": round(confidence, 3),
+                "distance": round(distance, 3)
+            }
+            pairs.append(pair)
+            
+            # 이 라이더는 이제 다른 오토바이와 페어링 불가
+            paired_rider_indices.add(rider_idx)
+            
+            print(f"오토바이 {moto_idx}와 라이더 페어링: 거리={distance:.3f}, 신뢰도={confidence:.3f}")
     
-    print(f"페어링 결과: {len(pairs)} 대")
     return pairs
 
 def rider_crop(img: np.ndarray, rider: Dict) -> Tuple[np.ndarray, List[int]]:
@@ -132,11 +168,11 @@ def helmet_result_aggregation(helmet_detections: List[Dict]) -> Dict:
     """헬멧 감지 결과 집계"""
     helmets = [d for d in helmet_detections if d["class"] == "helmet"]
     no_helmets = [d for d in helmet_detections if d["class"] == "no_helmet"]
+    items = [d for d in helmet_detections if d["class"] == "item"]
     
     print(f"      감지된 객체: {[d['class'] for d in helmet_detections]}")
     print(f"      헬멧 객체 수: {len(helmets)}, 노헬멧 객체 수: {len(no_helmets)}")
     
-    # 헬멧과 노헬멧 감지 결과 중 가장 높은 신뢰도 값 찾기
     max_helmet_conf = max([h["confidence"] for h in helmets]) if helmets else 0
     max_no_helmet_conf = max([nh["confidence"] for nh in no_helmets]) if no_helmets else 0
     
@@ -144,45 +180,74 @@ def helmet_result_aggregation(helmet_detections: List[Dict]) -> Dict:
     has_helmet = max_helmet_conf > HELMET_RESULT_AGGREGATION_THRESHOLD
     no_helmet_detected = max_no_helmet_conf > HELMET_RESULT_AGGREGATION_THRESHOLD
     
-    # 헬멧 위치 확인
-    helmet_on_head = False
-    if has_helmet and helmets:
-        # 헬멧이 머리 위에 있는지 확인
-        for helmet in helmets:
-            # 헬멧의 y 좌표
-            helmet_y1 = helmet["bbox"][1]  # 헬멧 상단 y좌표
-            helmet_y2 = helmet["bbox"][3]  # 헬멧 하단 y좌표
-            helmet_height = helmet_y2 - helmet_y1
+    # item이 헬멧일 가능성을 확인 - 매우 엄격한 기준 적용
+    item_on_head = False
+    helmet_like_item = None
+    
+    if items and not (has_helmet or no_helmet_detected):
+        # 아이템 중 가장 높은 신뢰도를 가진 것을 선택
+        items_sorted = sorted(items, key=lambda x: x["confidence"], reverse=True)
+        
+        for item in items_sorted:
+            # 물체의 위치와 비율 특성을 계산
+            item_y1 = item["bbox"][1]
+            item_y2 = item["bbox"][3]
+            item_height = item_y2 - item_y1
+            item_width = item["bbox"][2] - item["bbox"][0]
             
-            # 헬멧이 머리 위에 있는지 확인
-            if helmet_y1 < helmet_height * 1.5:  # 헬멧이 머리 위에 있는지 확인
-                helmet_on_head = True
-                print(f"      헬멧이 머리 위에 있음: y1={helmet_y1}, height={helmet_height}")
-                break
+            # 헬멧 형태 분석을 위한 추가 지표
+            aspect_ratio = item_width / item_height if item_height > 0 else 0
+            area = item_width * item_height
+            relative_y_pos = item_y1 / item_height if item_height > 0 else 999
+            
+            # 멀리있는 작은 물체를 판단
+            is_distant = item_height < 40
+            
+            print(f"      아이템 분석: 높이={item_height:.1f}, 비율={aspect_ratio:.2f}, 상대위치={relative_y_pos:.2f}, 면적={area:.1f}")
+            
+            # 헬멧 형태 분석 - 매우 엄격한 기준 적용
+            # 상대 위치가 0.3 미만이어야 함 (상단 30% 이내)
+            if relative_y_pos < 0.3:
+                # 헬멧 형태 추가 검증
+                is_helmet_shaped = (
+                    # 헬멧은 일반적으로 너무 넓지 않음
+                    aspect_ratio < 1.3 and
+                    # 너무 작은 물체는 신뢰도 낮음 (멀리 있는 경우 제외)
+                    (area > 1200 or is_distant) and
+                    # 헬멧의 최소 크기 요구사항
+                    (item_height > 35 or is_distant) and
+                    # 신뢰도 요구사항
+                    item["confidence"] > 0.65
+                )
+                
+                if is_helmet_shaped:
+                    item_on_head = True
+                    helmet_like_item = item
+                    print(f"      헬멧 가능성 높음: 높이={item_height:.1f}, 비율={aspect_ratio:.2f}, 상대위치={relative_y_pos:.2f}")
+                    break
+                else:
+                    print(f"      헬멧 형태 불충분: 비율={aspect_ratio:.2f}, 면적={area:.1f}")
             else:
-                print(f"      헬멧이 머리 위에 없음: y1={helmet_y1}, height={helmet_height}")
+                print(f"      위치 부적합: 상대위치={relative_y_pos:.2f} (0.3 미만이어야 함)")
     
-    print(f"      헬멧 감지: {has_helmet}, 헬멧 위치 올바름: {helmet_on_head}")
-    
-    # 중요: 헬멧 감지 객체가 있지만 헬멧/노헬멧으로 분류되지 않은 경우에도 
-    # 미착용으로 처리 
+    # 향상된 판단 로직
     if len(helmet_detections) > 0 and len(helmets) == 0 and len(no_helmets) == 0:
-        print("      헬멧 관련 객체가 감지되었으나 헬멧/노헬멧으로 분류되지 않음 -> 미착용으로 처리")
-        status = "no_helmet"
-        message = "경고: 헬멧을 착용하지 않은 오토바이 운전자가 감지되었습니다!"
-    elif has_helmet and helmet_on_head:
+        if item_on_head and helmet_like_item:
+            # 헬멧 형태와 높은 신뢰도를 가진 아이템만 헬멧으로 인정
+            print("      헬멧 가능성: 헬멧 형태의 물체가 머리 위에 위치")
+            status = "helmet"
+            message = "안전: 헬멧을 착용한 오토바이 운전자가 감지되었습니다."
+        else:
+            print("      헬멧으로 인정되지 않는 물체 감지 -> 미착용으로 처리")
+            status = "no_helmet"
+            message = "경고: 헬멧을 착용하지 않은 오토바이 운전자가 감지되었습니다!"
+    elif has_helmet:
         status = "helmet"
         message = "안전: 헬멧을 착용한 오토바이 운전자가 감지되었습니다."
-        status = "helmet"
-        message = "안전: 헬멧을 착용한 오토바이 운전자가 감지되었습니다."
-    elif has_helmet and not helmet_on_head:
-        status = "helmet_not_worn"
-        message = "경고: 헬멧이 감지되었으나 착용하지 않았습니다!"
     elif no_helmet_detected:
         status = "no_helmet"
         message = "경고: 헬멧을 착용하지 않은 오토바이 운전자가 감지되었습니다!"
     else:
-        # 헬멧 감지 결과가 없는 경우에도 미착용으로 처리 (如果没有头盔检测结果，也视为未佩戴)
         status = "no_helmet"
         message = "경고: 헬멧을 착용하지 않은 것으로 판단됩니다!"
     
@@ -191,7 +256,7 @@ def helmet_result_aggregation(helmet_detections: List[Dict]) -> Dict:
         "message": message,
         "helmet_confidence": max_helmet_conf,
         "no_helmet_confidence": max_no_helmet_conf,
-        "helmet_on_head": helmet_on_head if has_helmet else False,
+        "helmet_on_head": True if status == "helmet" else False,
         "detections": helmet_detections
     }
 
@@ -199,55 +264,69 @@ def helmet_label_visualization(img: np.ndarray, results: Dict) -> np.ndarray:
     """감지 결과 시각화"""
     img_copy = img.copy()
     
-    # 모든 감지 결과 표시
-    for detection in results.get("all_detections", []):
-        x1, y1, x2, y2 = map(int, detection["bbox"])
-        cls = detection["class"]
-        conf = detection["confidence"]
-        
-        color = LABEL_COLORS.get(cls, (255, 255, 255))  # 기본 색상은 흰색
-        
-        # 바운딩 박스 그리기
-        cv2.rectangle(img_copy, (x1, y1), (x2, y2), color, LABEL_THICKNESS)
-        
-        # 라벨 텍스트
-        label = f"{cls}: {conf:.2f}"
-        
-        # 라벨 배경 그리기
-        text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE, LABEL_THICKNESS)[0]
-        cv2.rectangle(img_copy, (x1, y1 - text_size[1] - 5), (x1 + text_size[0], y1), color, -1)
-        
-        # 라벨 텍스트 그리기
-        cv2.putText(img_copy, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, LABEL_FONT_SCALE, (255, 255, 255), LABEL_THICKNESS)
+    # PIL 변환을 통한 한글 텍스트 처리
+    from PIL import Image, ImageDraw, ImageFont
+    import os
     
-    # 헬멧 미착용 라이더 강조 표시
+    # OpenCV BGR → RGB 변환
+    img_rgb = cv2.cvtColor(img_copy, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(img_rgb)
+    draw = ImageDraw.Draw(pil_img)
+    
+    # 글꼴 설정
+    try:
+        font_path = os.path.join(os.environ['WINDIR'], 'Fonts', 'malgun.ttf')
+        if not os.path.exists(font_path):
+            font_path = os.path.join(os.environ['WINDIR'], 'Fonts', 'gulim.ttc')
+        
+        label_font = ImageFont.truetype(font_path, 20)
+        warning_font = ImageFont.truetype(font_path, 16)  # 경고 글꼴 크기 축소
+        header_font = ImageFont.truetype(font_path, 28)
+    except Exception as e:
+        print(f"폰트 로드 오류: {e}")
+        label_font = ImageFont.load_default()
+        warning_font = ImageFont.load_default()
+        header_font = ImageFont.load_default()
+    
+        
+    # 헬멧 착용/미착용 라이더 표시
     for pair in results.get("rider_pairs", []):
         helmet_result = pair.get("helmet_result", {})
         rider = pair.get("rider", {})
         status = helmet_result.get("status", "")
         
+        x1, y1, x2, y2 = map(int, rider["bbox"])
+        
         if status in ["no_helmet", "helmet_not_worn"]:
-            # 라이더 바운딩 박스를 빨간색으로 강조
-            x1, y1, x2, y2 = map(int, rider["bbox"])
-            cv2.rectangle(img_copy, (x1, y1), (x2, y2), (0, 0, 255), LABEL_THICKNESS * 2)
+            # 미착용 라이더 - 빨간색 테두리
+            draw.rectangle([(x1, y1), (x2, y2)], outline=(255, 0, 0), width=LABEL_THICKNESS * 2)
             
-            # 경고 메시지
-            warning_text = "헬멧 미착용!" if status == "no_helmet" else "헬멧 착용 필요!"
-            text_size = cv2.getTextSize(warning_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+            warning_text = "no-helmet"
+            text_color = (255, 0, 0)  # 빨간색
             
-            # 경고 텍스트 배경
-            cv2.rectangle(img_copy, (x1, y1 - text_size[1] - 10), (x1 + text_size[0], y1), (0, 0, 255), -1)
+            text_bbox = draw.textbbox((0, 0), warning_text, font=warning_font)
+            text_width = text_bbox[2] - text_bbox[0]
+            text_height = text_bbox[3] - text_bbox[1]
             
-            # 경고 텍스트
-            cv2.putText(img_copy, warning_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            draw.rectangle([(x1, y1 - text_height - 5), (x1 + text_width, y1)], fill=text_color)
+            draw.text((x1, y1 - text_height - 5), warning_text, font=warning_font, fill=(255, 255, 255))
+            
+        elif status == "helmet":
+            # 착용 라이더 - 녹색 테두리
+            draw.rectangle([(x1, y1), (x2, y2)], outline=(0, 255, 0), width=LABEL_THICKNESS * 2)
+            
+            safety_text = "helmet"
+            text_color = (0, 155, 0)  # 녹색
+            
+            text_bbox = draw.textbbox((0, 0), safety_text, font=warning_font)
+            text_width = text_bbox[2] - text_bbox[0]
+            text_height = text_bbox[3] - text_bbox[1]
+            
+            draw.rectangle([(x1, y1 - text_height - 5), (x1 + text_width, y1)], fill=text_color)
+            draw.text((x1, y1 - text_height - 5), safety_text, font=warning_font, fill=(255, 255, 255))
     
-    # 전체 경고 메시지 표시
-    warning_count = sum(1 for pair in results.get("rider_pairs", []) 
-                      if pair.get("helmet_result", {}).get("status", "") in ["no_helmet", "helmet_not_worn"])
-    
-    if warning_count > 0:
-        warning = f"경고: {warning_count}명의 라이더가 헬멧을 올바르게 착용하지 않았습니다!"
-        cv2.putText(img_copy, warning, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+    # PIL 이미지를 OpenCV 형식으로 변환
+    img_copy = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
     
     return img_copy
 
@@ -275,8 +354,11 @@ def process_detection(img: np.ndarray) -> Dict:
             cls = box.cls[0].item()
             class_name = yolov11n_model.names[int(cls)]
             
-            # "person"및"motorcycle" 클래스만 처리
-            if conf > CONFIDENCE_THRESHOLD and class_name in ["person", "motorcycle"]:
+            # 신뢰도 임계값 조정 (원거리 객체 감지 향상)
+            distance_adjusted_threshold = CONFIDENCE_THRESHOLD * 0.8
+            
+            # "person"및"motorcycle" 클래스만 처리 (신뢰도 임계값 낮춤)
+            if conf > distance_adjusted_threshold and class_name in ["person", "motorcycle"]:
                 detection = {
                     "bbox": [round(x, 2) for x in [x1, y1, x2, y2]],
                     "confidence": round(conf, 3),
@@ -316,16 +398,19 @@ def process_detection(img: np.ndarray) -> Dict:
             print(f"      크롭 성공: 구역={crop_coords}, 크롭 이미지 크기={rider_img.shape}")
             
             # 6. 헬멧 모델로 헬멧 감지
+            
             print("   6. 헬멧 모델로 헬멧 감지")
+            
+            # 判断是否为远距离小物体
+            is_distant = (rider["bbox"][2] - rider["bbox"][0]) < 100  # 小于100像素宽度视为远距离
+
+            # 针对远距离物体使用更低的置信度阈值
+            helmet_threshold = CONFIDENCE_THRESHOLD * (0.7 if is_distant else 1.0)
+
             helmet_results = helmet_model(rider_img)
             
-            # 6.1 YOLO-World 모델로도 헬멧 감지 (비교용)
-            print("   6.1 YOLO-World 모델로 헬멧 감지 (비교용)")
-            yolo_world_helmet_results = yolo_world_model(rider_img)
-            
-            # 두 모델의 결과 비교를 위한 변수
+            # 헬멧 감지 결과를 저장할 리스트
             helmet_detections = []
-            yolo_world_helmet_detections = []
             
             # Helmet 모델 결과 처리
             print("   Helmet 모델 결과 처리")
@@ -338,7 +423,20 @@ def process_detection(img: np.ndarray) -> Dict:
                     cls = box.cls[0].item()
                     class_name = helmet_model.names[int(cls)]
                     
-                    if conf > CONFIDENCE_THRESHOLD:
+                    # 远距离物体特殊处理
+                    if is_distant and class_name == "item" and conf > helmet_threshold:
+                        # 计算物体在头部的相对位置
+                        rel_y_pos = (y1 - rider_crop_y1) / max((rider_crop_y2 - rider_crop_y1), 1)
+                        
+                        # 如果物体在头部上方，很可能是头盔
+                        if rel_y_pos < 0.3:  # 位于头部上方30%区域
+                            class_name = "helmet"  # 将item重新分类为helmet
+                            print(f"      远距离物体重新分类: item -> helmet, 位置={rel_y_pos:.2f}")
+                    
+                    # 신뢰도 임계값 조정 (헬멧 감지 향상)
+                    helmet_confidence_threshold = CONFIDENCE_THRESHOLD * 0.85
+                    
+                    if conf > helmet_confidence_threshold:
                         # 원본 이미지 좌표로 변환
                         orig_x1 = crop_coords[0] + x1
                         orig_y1 = crop_coords[1] + y1
@@ -353,67 +451,6 @@ def process_detection(img: np.ndarray) -> Dict:
                         }
                         helmet_detections.append(detection)
                         all_detections.append(detection)
-            
-            # YOLO-World 모델 결과 처리
-            print("   YOLO-World 모델 결과 처리")
-            for result in yolo_world_helmet_results:
-                boxes = result.boxes
-                for box in boxes:
-                    # 크롭된 이미지 내의 좌표
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
-                    conf = box.conf[0].item()
-                    cls = box.cls[0].item()
-                    class_name = yolo_world_model.names[int(cls)]
-                    
-                    # 헬멧 관련 클래스만 필터링 (helmet, hat 등)
-                    helmet_related_classes = ["helmet", "hat", "cap", "headgear"]
-                    is_helmet_related = any(helmet_class in class_name.lower() for helmet_class in helmet_related_classes)
-                    
-                    if conf > CONFIDENCE_THRESHOLD and is_helmet_related:
-                        # 원본 이미지 좌표로 변환
-                        orig_x1 = crop_coords[0] + x1
-                        orig_y1 = crop_coords[1] + y1
-                        orig_x2 = crop_coords[0] + x2
-                        orig_y2 = crop_coords[1] + y2
-                        
-                        # YOLO-World 모델은 헬멧/노헬멧을 직접 구분하지 않으므로
-                        # 감지된 클래스를 "helmet"으로 통일
-                        detection = {
-                            "bbox": [round(x, 2) for x in [orig_x1, orig_y1, orig_x2, orig_y2]],
-                            "confidence": round(conf, 3),
-                            "class": "helmet",
-                            "model": "yolo_world",
-                            "original_class": class_name  # 원래 클래스 이름 저장
-                        }
-                        yolo_world_helmet_detections.append(detection)
-                        # 이 결과는 비교용이므로 all_detections에는 추가하지 않음
-            
-            # 두 모델의 결과 비교
-            print(f"      Helmet 모델 감지 결과: {len(helmet_detections)}개")
-            print(f"      YOLO-World 모델 감지 결과: {len(yolo_world_helmet_detections)}개")
-            
-            # 모델 성능 비교 (간단한 지표)
-            if len(helmet_detections) > 0 and len(yolo_world_helmet_detections) > 0:
-                print("      두 모델 모두 헬멧 관련 객체 감지")
-                # 신뢰도 비교
-                avg_helmet_conf = sum(d["confidence"] for d in helmet_detections) / len(helmet_detections)
-                avg_yolo_world_conf = sum(d["confidence"] for d in yolo_world_helmet_detections) / len(yolo_world_helmet_detections)
-                print(f"      Helmet 모델 평균 신뢰도: {avg_helmet_conf:.3f}")
-                print(f"      YOLO-World 모델 평균 신뢰도: {avg_yolo_world_conf:.3f}")
-                
-                # 더 좋은 모델 선택 (여기서는 단순히 신뢰도가 높은 모델 선택)
-                if avg_yolo_world_conf > avg_helmet_conf:
-                    print("      YOLO-World 모델이 더 높은 신뢰도를 보임")
-                    # 실제 적용 시에는 이 부분을 활성화하여 더 좋은 모델의 결과 사용 가능
-                    # helmet_detections = yolo_world_helmet_detections
-                else:
-                    print("      Helmet 모델이 더 높은 신뢰도를 보임")
-            elif len(yolo_world_helmet_detections) > 0 and len(helmet_detections) == 0:
-                print("      YOLO-World 모델만 헬멧 관련 객체 감지")
-                # 실제 적용 시에는 이 부분을 활성화하여 YOLO-World 모델 결과 사용 가능
-                # helmet_detections = yolo_world_helmet_detections
-            elif len(helmet_detections) > 0 and len(yolo_world_helmet_detections) == 0:
-                print("      Helmet 모델만 헬멧 관련 객체 감지")
             
             print(f"      {len(helmet_detections)}개의 헬멧 관련 객체 감지")
             
